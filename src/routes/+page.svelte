@@ -1,14 +1,52 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import { onMount } from "svelte";
 
+  import OpenAI from "openai";
+  const client = new OpenAI({
+    apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+    dangerouslyAllowBrowser: true,
+  });
   let name = $state("");
   let greetMsg = $state("");
-  // $effect(async () => {
-  //   greetMsg = await invoke("greet", { name });
-  //   //    console.log(`greetMsg: ${greetMsg}`);
-  // });
+  $effect(async () => {
+    console.log(`env key: ${import.meta.env.VITE_OPENAI_API_KEY}`);
+  });
+
+  async function fetchEnvVar(key) {
+    const value = await invoke("get_env_var", { key });
+    console.log(value);
+    return value;
+  }
+
+  // Example usage
+
+  onMount(async () => {
+    console.log(`env key: ${import.meta.env.VITE_OPENAI_API_KEY}`);
+    const response = await client.responses.create({
+      model: "gpt-4o",
+      input: name || "Write a one-sentence bedtime story about a unicorn.",
+    });
+    console.log(response);
+    console.log(response.output_text);
+
+    fetchEnvVar("VITE_OPENAI_API_KEY").then((key) => {
+      console.log("API KEY:", key);
+    });
+  });
+
+  async function promptLLM(prompt) {
+    const response = await client.responses.create({
+      model: "gpt-4o",
+      input: prompt,
+    });
+    console.log(response);
+    console.log(response.output_text);
+  }
+
   async function greet(event) {
     console.log(`Name: ${name}, Event: `, event);
+    promptLLM(name);
     event.preventDefault();
     // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
     greetMsg = await invoke("greet", { name });
