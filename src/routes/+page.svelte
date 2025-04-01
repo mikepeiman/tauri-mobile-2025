@@ -3,6 +3,9 @@
   import { onMount } from "svelte";
 
   import OpenAI from "openai";
+
+  let browser = false;
+
   const client = new OpenAI({
     apiKey: import.meta.env.VITE_OPENAI_API_KEY,
     dangerouslyAllowBrowser: true,
@@ -22,17 +25,18 @@
   // Example usage
 
   onMount(async () => {
+    browser = true;
     console.log(`env key: ${import.meta.env.VITE_OPENAI_API_KEY}`);
     const response = await client.responses.create({
       model: "gpt-4o",
-      input: name || "Write a one-sentence bedtime story about a unicorn.",
+      input: name || "Hit me with some random wisdom quote. Make it profound.",
     });
     console.log(response);
     console.log(response.output_text);
 
-    fetchEnvVar("VITE_OPENAI_API_KEY").then((key) => {
-      console.log("API KEY:", key);
-    });
+    // fetchEnvVar("VITE_OPENAI_API_KEY").then((key) => {
+    //   console.log("API KEY:", key);
+    // });
   });
 
   async function promptLLM(prompt) {
@@ -49,8 +53,10 @@
     promptLLM(name);
     event.preventDefault();
     // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
-    console.log(greetMsg);
+    if (browser) {
+      greetMsg = await invoke("greet", { name });
+      console.log(greetMsg);
+    }
   }
 </script>
 
@@ -62,21 +68,26 @@
   <h3>Track, plan and execute like a fucking champion.</h3>
   <!-- Parent element with gradient background and padding -->
   <div
-    class="p-4 bg-gradient-to-r from-cyan-500 via-purple-500 to-green-500 rounded-lg w-max">
+    class="p-4 bg-gradient-to-r from-cyan-500 via-purple-500 to-green-500 rounded-lg w-full">
     <!-- Child element with solid background -->
-    <div class="        bg-white p-6 rounded-md">
-      <h3 class="text-lg font-semibold text-gray-900">Card Title</h3>
-      <p class="mt-2 text-gray-700">
-        This card has a nice gradient border created using the parent padding
-        trick.
-      </p>
+    <div class="w-max bg-white p-6 rounded-md">
+      <h3 class="text-lg font-semibold text-gray-900">
+        Image Generation Options
+      </h3>
     </div>
   </div>
   <form
     class="row p-12 border-12 border-sky-400 rounded-2xl m-4"
     onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
+    <textarea
+      id="greet-input"
+      class="mr-4 p-6 border-2 border-gray-300 rounded-md w-full"
+      placeholder="Enter a prompt to create..."
+      bind:value={name} />
+    <button
+      type="submit"
+      class="bg-emerald-300 p-6 cursor-pointer rounded-lg hover:bg-emerald-400 transition-all"
+      >Submit</button>
   </form>
 
   {#await greetMsg}
@@ -162,7 +173,7 @@
     font-family: "montserrat", "Roboto", sans-serif;
   }
 
-  input,
+  /* input,
   button {
     border-radius: 8px;
     border: 1px solid transparent;
@@ -191,11 +202,7 @@
   input,
   button {
     outline: none;
-  }
-
-  #greet-input {
-    margin-right: 5px;
-  }
+  } */
 
   @media (prefers-color-scheme: dark) {
     :root {
