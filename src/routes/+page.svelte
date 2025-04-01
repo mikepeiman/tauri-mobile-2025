@@ -13,6 +13,7 @@
   let promptInput = $state("");
   let numImages = $state(2);
   let greetMsg = $state("");
+  let contentType = $state("image");
   $effect(async () => {
     console.log(`env key: ${import.meta.env.VITE_OPENAI_API_KEY}`);
   });
@@ -84,9 +85,70 @@
     class="p-4 bg-gradient-to-r from-cyan-400 via-purple-200 to-green-300 w-full my-8">
     <!-- Child element with solid background -->
     <div class="w-full bg-white p-6 rounded-md">
-      <h3 class="text-lg font-semibold text-gray-900 mb-6">
+      <div class="flex w-full justify-between">
+        <h2 class="flex items-center w-[20ch]">
+          Generate: <span class="p-2 bg-cyan-200 rounded-lg mx-2">
+            {contentType}</span>
+        </h2>
+        <div class="flex justify-center items-center w-full">
+          <div class="flex items-center space-x-4">
+            <div>
+              <input
+                type="radio"
+                id="text-option"
+                name="content-type"
+                value="text"
+                class="sr-only peer"
+                bind:group={contentType} />
+              <label
+                for="text-option"
+                class="
+                  px-4
+                  py-2
+                  bg-gray-200
+                  rounded-md
+                  text-gray-700
+                  cursor-pointer
+                  peer-checked:bg-blue-500
+                  peer-checked:text-white
+                  peer-checked:shadow-md
+                  transition-colors
+                ">
+                Text
+              </label>
+            </div>
+
+            <div>
+              <input
+                type="radio"
+                id="image-option"
+                name="content-type"
+                value="image"
+                class="sr-only peer"
+                bind:group={contentType} />
+              <label
+                for="image-option"
+                class="
+                  px-4
+                  py-2
+                  bg-gray-200
+                  rounded-md
+                  text-gray-700
+                  cursor-pointer
+                  peer-checked:bg-blue-500
+                  peer-checked:text-white
+                  peer-checked:shadow-md
+                  transition-colors
+                ">
+                Image
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <h2 class="text-lg font-bold text-gray-900 bg-cyan-200 p-6 my-12">
         Image Generation Options
-      </h3>
+      </h2>
       <div class="grid h-full">
         <div class="grid [grid-template-columns:_1fr_4fr]">
           <div class="flex justify-between">
