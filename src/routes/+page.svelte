@@ -1,102 +1,84 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
-
   import OpenAI from "openai";
 
-  let browser = false;
-
-  const client = new OpenAI({
-    apiKey: import.meta.env.VITE_OPENAI_API_KEY,
-    dangerouslyAllowBrowser: true,
-  });
+  // Assuming Svelte 5 Runes based on $state usage
+  // If not using Runes, replace $state with regular `let`
   let promptInput = $state("");
   let numImages = $state(2);
-  let greetMsg = $state("");
-  let contentType = $state("image");
+  // let greetMsg = $state(""); // Removed if not used for image display
+  let contentType = $state("image"); // Default to image if that's intended
   let selectedLLM = $state("gpt-4o");
-  $effect(async () => {
-    console.log(`env key: ${import.meta.env.VITE_OPENAI_API_KEY}`);
+  let imagePromise = $state(null); // <--- Variable to hold the promise
+
+  let browser = false; // Keep this if needed for Tauri checks
+
+  const client = new OpenAI({
+    apiKey: import.meta.env.VITE_OPENAI_API_KEY, // Ensure this is securely handled, especially in browser
+    dangerouslyAllowBrowser: true,
   });
 
-  async function fetchEnvVar(key) {
-    const value = await invoke("get_env_var", { key });
-    console.log(value);
-    return value;
-  }
-
-  // Example usage
-
-  onMount(async () => {
+  onMount(() => {
     browser = true;
   });
 
+  function preventDefault(fn) {
+    return function (event) {
+      event.preventDefault();
+      fn.call(this, event);
+    };
+  }
+
   async function promptLLM(prompt) {
+    // No changes needed here if it already returns the response or throws error
+    // Ensure it returns the URL string for images, or throws an error
     console.log(`🚀 ~ promptLLM ~ prompt:`, prompt);
 
     if (contentType === "image") {
-      console.log(`🚀 ~ promptLLM ~ image:`);
-      const response = await client.images.generate({
-        model: "dall-e-3",
-        prompt: prompt,
-      });
-      const data = await response.data;
-      imageUrl = data[0].url;
-      console.log(response, response.data, imageUrl);
-      return response;
+      console.log(`🚀 ~ promptLLM ~ image generation:`);
+      try {
+        const response = await client.images.generate({
+          model: "dall-e-3",
+          prompt: prompt,
+          n: 1, // Requesting one image
+          response_format: "url", // Explicitly ask for URL
+        });
+        const imageUrlResult = response.data[0].url;
+        console.log("Image URL received:", imageUrlResult);
+        return imageUrlResult; // <-- Return the URL string
+      } catch (err) {
+        console.error("Image generation error:", err);
+        throw err; // Propagate error to the await block
+      }
     } else {
-      console.log(`🚀 ~ promptLLM ~ text`);
-      const response = await client.responses.create({
-        model: selectedLLM || "gpt-4o",
-        input: prompt,
-      });
-      console.log(response);
-      console.log(response.output_text);
-      return response;
+      console.log(`🚀 ~ promptLLM ~ text generation`);
+      try {
+        // Assuming chat completion for text
+        const response = await client.chat.completions.create({
+          model: selectedLLM || "gpt-4o",
+          messages: [{ role: "user", content: prompt }],
+        });
+        const textResult = response.choices[0].message.content;
+        console.log("Text response received:", textResult);
+        return textResult; // <-- Return the text string
+      } catch (err) {
+        console.error("Text generation error:", err);
+        throw err; // Propagate error
+      }
     }
   }
 
-  async function greet(event) {
-    console.log(`PromptInput: ${promptInput}, Event: `, event);
-    promptLLM(promptInput);
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    if (browser) {
-      greetMsg = await invoke("greet", { promptInput });
-      console.log(greetMsg);
-      imageGen(promptInput);
-    }
+  // Renamed form submission handler
+  function handleSubmit() {
+    if (!promptInput) return; // Optional: prevent empty submission
+    console.log("Submitting prompt:", promptInput);
+    // Assign the promise to our reactive variable
+    imagePromise = promptLLM(promptInput);
   }
 
-  async function respond(event) {
-    console.log(`PromptInput: ${promptInput}, Event: `, event);
-    promptLLM(promptInput);
-    event.preventDefault();
-  }
-
-  async function imageGen(msg) {
-    const image = await client.images.generate({
-      model: "dall-e-3",
-      prompt: msg,
-    });
-
-    console.log(image, image.data);
-  }
-
-  let imageUrl =
-    "https://oaidalleapiprodscus.blob.core.windows.net/private/org-o2RmHCyhALsNSbC5p0fvfUkW/user-d2aLiGPqR6P9E1WwxcbLWhYl/img-k0AAJhVXQZIwP1fVT7xaxKyw.png?st=2025-04-01T18%3A26%3A02Z&se=2025-04-01T20%3A26%3A02Z&sp=r&sv=2024-08-04&sr=b&rscd=inline&rsct=image/png&skoid=d505667d-d6c1-4a0a-bac7-5c84a87759f8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-04-01T19%3A02%3A48Z&ske=2025-04-02T19%3A02%3A48Z&sks=b&skv=2024-08-04&sig=1sTb16QWG7aLaxB9Lr3eZKFr0ej9IXq/Tuz3VpmVo6E%3D";
-  let loading = true;
-  let error = false;
-
-  function handleLoad() {
-    loading = false;
-    error = false;
-  }
-
-  function handleError() {
-    loading = false;
-    error = true;
-  }
+  // Removed unused/redundant functions like greet, respond, imageGen
+  // Removed old imageUrl, loading, error variables if only used for image display
 </script>
 
 <main class="container min-w-full">
@@ -270,41 +252,51 @@
           </div>
         </div>
       </div>
-      <form class="row p-12 rounded-2xl m-4" onsubmit={promptLLM(promptInput)}>
+
+      <form
+        class="row p-12 rounded-2xl m-4"
+        onsubmit={preventDefault(handleSubmit)}>
         <textarea
           id="greet-input"
           class="mr-4 p-6 border-2 border-gray-300 rounded-md w-full"
           placeholder="Enter a prompt to create..."
-          bind:value={promptInput} />
+          bind:value={promptInput}></textarea>
         <button
           type="submit"
-          class="bg-emerald-300 p-6 cursor-pointer rounded-lg hover:bg-emerald-400 transition-all"
-          >Submit</button>
+          class="bg-emerald-300 p-6 cursor-pointer rounded-lg hover:bg-emerald-400 transition-all">
+          Submit
+        </button>
       </form>
-      <div class="image-container">
-        {#if loading}
-          <div class="placeholder">Loading...</div>
-        {/if}
-        {#if error}
-          <div class="error-placeholder">Failed to load</div>
-        {/if}
-        <img
-          src={imageUrl}
-          width="1024"
-          height="1024"
-          alt="Generated image"
-          class:hidden={loading || error}
-          onload={handleLoad}
-          onerror={handleError}
-          loading="lazy" />
-      </div>
-      {#await greetMsg}
-        <p>Loading...</p>
-      {:then value}
-        <p>{value}</p>
-      {:catch error}
-        <p style="color: red">{error}</p>
-      {/await}
+
+      <!-- Await Block for Image/Text Display -->
+      {#if imagePromise}
+        {#await imagePromise}
+          <div class="placeholder p-4 text-center">Generating...</div>
+        {:then result}
+          <!-- Check if the result is for an image or text -->
+          {#if contentType === "image"}
+            <div class="image-container mt-4">
+              <img
+                src={result}
+                width="1024"
+                height="1024"
+                alt="Generated image for prompt: {promptInput}"
+                class="mx-auto border rounded shadow-lg"
+                loading="lazy" />
+            </div>
+          {:else}
+            <div class="text-result bg-gray-100 p-4 mt-4 border rounded">
+              <h3 class="font-semibold mb-2">Generated Text:</h3>
+              <p>{result}</p>
+              <!-- result is the text output -->
+            </div>
+          {/if}
+        {:catch error}
+          <p style="color: red" class="p-4 text-center">
+            Generation failed: {error.message}
+          </p>
+        {/await}
+      {/if}
     </div>
   </div>
 </main>
