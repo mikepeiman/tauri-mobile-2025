@@ -14,16 +14,6 @@
 
   let selectedWidth = $state(1024); // Example default value
   let selectedHeight = $state(1024); // Example default value
-  const dimensionOptions = [
-    "256x256",
-    "512x512",
-    "1024x1024",
-    "1024x1792",
-    "1792x1024",
-  ];
-  let selectedDimension = $state("1024x1024"); // Set the desired default value
-  let width = $derived(parseInt(selectedDimension.split("x")[0]));
-  let height = $derived(parseInt(selectedDimension.split("x")[1]));
 
   // Reactive statement to generate the dimension string
   let dimensionString = $derived(`${selectedWidth}x${selectedHeight}`);
@@ -84,7 +74,7 @@
           prompt: prompt,
           n: numImages, // Use the reactive count
           response_format: "url", // Get URLs
-          size: dimensionString || "1024x1024", // Add size if needed, ensure model supports it
+          size: imageSize || "1024x1024", // Add size if needed, ensure model supports it
         });
         // Extract just the URLs
         const imageUrls = response.data.map((item) => item.url);
@@ -92,7 +82,6 @@
         if (!imageUrls || imageUrls.length === 0) {
           throw new Error("API returned no image URLs.");
         }
-        generationPromise = null;
         // Return object indicating type and result
         return { type: "image", result: imageUrls };
       } catch (err) {
@@ -113,7 +102,6 @@
         if (!textResult) {
           throw new Error("API returned no text content.");
         }
-        generationPromise = null;
         // Return object indicating type and result
         return { type: "text", result: textResult };
       } catch (err) {
@@ -240,14 +228,50 @@
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <label for="width" class="sr-only">Width</label>
+                <!-- <select
+                id="width"
+                name="width"
+                class="
+                    shadow
+                    appearance-none
+                    border-2 border-emerald-700
+                    bg-emerald-100
+                    rounded
+                    w-full
+                    py-2
+                    px-3
+                    text-gray-700
+                    leading-tight
+                    focus:outline-none focus:shadow-outline
+                  ">
+                <option value="512">512</option>
+                <option value="768">768</option>
+                <option value="1024" selected>1024</option>
+                <option value="2048">2048</option>
+                <option value="4096">4096</option>
+              </select> -->
                 <select
                   id="width"
                   name="width"
-                  bind:value={selectedDimension}
                   class="shadow-sm appearance-none border border-gray-300 bg-white rounded w-full py-1.5 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 text-sm">
-                  {#each dimensionOptions as dimension}
-                    <option value={dimension}>{dimension}</option>
-                  {/each}
+                  <option value="512">512</option>
+                  <option value="768">768</option>
+                  <option value="1024" selected>1024</option>
+                  <option value="2048">2048</option>
+                  <option value="4096">4096</option>
+                </select>
+              </div>
+              <div>
+                <label for="height" class="sr-only">Height</label>
+                <select
+                  id="height"
+                  name="height"
+                  class="shadow-sm appearance-none border border-gray-300 bg-white rounded w-full py-1.5 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 text-sm">
+                  <option value="512">512</option>
+                  <option value="768">768</option>
+                  <option value="1024" selected>1024</option>
+                  <option value="2048">2048</option>
+                  <option value="4096">4096</option>
                 </select>
               </div>
             </div>
