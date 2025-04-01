@@ -14,6 +14,7 @@
   let numImages = $state(2);
   let greetMsg = $state("");
   let contentType = $state("image");
+  let selectedLLM = $state("gpt-4o");
   $effect(async () => {
     console.log(`env key: ${import.meta.env.VITE_OPENAI_API_KEY}`);
   });
@@ -28,28 +29,31 @@
 
   onMount(async () => {
     browser = true;
-    console.log(`env key: ${import.meta.env.VITE_OPENAI_API_KEY}`);
-    const response = await client.responses.create({
-      model: "gpt-4o",
-      input:
-        promptInput ||
-        "Hit me with some random wisdom quote. Make it profound.",
-    });
-    console.log(response);
-    console.log(response.output_text);
-
-    // fetchEnvVar("VITE_OPENAI_API_KEY").then((key) => {
-    //   console.log("API KEY:", key);
-    // });
   });
 
   async function promptLLM(prompt) {
-    const response = await client.responses.create({
-      model: "gpt-4o",
-      input: prompt,
-    });
-    console.log(response);
-    console.log(response.output_text);
+    console.log(`🚀 ~ promptLLM ~ prompt:`, prompt);
+
+    if (contentType === "image") {
+      console.log(`🚀 ~ promptLLM ~ image:`);
+      const response = await client.images.generate({
+        model: "dall-e-3",
+        prompt: prompt,
+      });
+      const data = await response.data;
+      imageUrl = data[0].url;
+      console.log(response, response.data, imageUrl);
+      return response;
+    } else {
+      console.log(`🚀 ~ promptLLM ~ text`);
+      const response = await client.responses.create({
+        model: selectedLLM || "gpt-4o",
+        input: prompt,
+      });
+      console.log(response);
+      console.log(response.output_text);
+      return response;
+    }
   }
 
   async function greet(event) {
@@ -64,6 +68,12 @@
     }
   }
 
+  async function respond(event) {
+    console.log(`PromptInput: ${promptInput}, Event: `, event);
+    promptLLM(promptInput);
+    event.preventDefault();
+  }
+
   async function imageGen(msg) {
     const image = await client.images.generate({
       model: "dall-e-3",
@@ -72,14 +82,28 @@
 
     console.log(image, image.data);
   }
+
+  let imageUrl =
+    "https://oaidalleapiprodscus.blob.core.windows.net/private/org-o2RmHCyhALsNSbC5p0fvfUkW/user-d2aLiGPqR6P9E1WwxcbLWhYl/img-k0AAJhVXQZIwP1fVT7xaxKyw.png?st=2025-04-01T18%3A26%3A02Z&se=2025-04-01T20%3A26%3A02Z&sp=r&sv=2024-08-04&sr=b&rscd=inline&rsct=image/png&skoid=d505667d-d6c1-4a0a-bac7-5c84a87759f8&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2025-04-01T19%3A02%3A48Z&ske=2025-04-02T19%3A02%3A48Z&sks=b&skv=2024-08-04&sig=1sTb16QWG7aLaxB9Lr3eZKFr0ej9IXq/Tuz3VpmVo6E%3D";
+  let loading = true;
+  let error = false;
+
+  function handleLoad() {
+    loading = false;
+    error = false;
+  }
+
+  function handleError() {
+    loading = false;
+    error = true;
+  }
 </script>
 
 <main class="container min-w-full">
   <div class="row">
-    <h1 class="header">Metabrain</h1>
+    <h1 class="header">ImageGen</h1>
   </div>
-  <h2>Welcome to your operating system for life.</h2>
-  <h3>Track, plan and execute like a fucking champion.</h3>
+  <h2>Make cool stuff with AI</h2>
   <!-- Parent element with gradient background and padding -->
   <div
     class="p-4 bg-gradient-to-r from-cyan-400 via-purple-200 to-green-300 w-full my-8">
@@ -246,7 +270,7 @@
           </div>
         </div>
       </div>
-      <form class="row p-12 rounded-2xl m-4" onsubmit={greet}>
+      <form class="row p-12 rounded-2xl m-4" onsubmit={promptLLM(promptInput)}>
         <textarea
           id="greet-input"
           class="mr-4 p-6 border-2 border-gray-300 rounded-md w-full"
@@ -257,7 +281,23 @@
           class="bg-emerald-300 p-6 cursor-pointer rounded-lg hover:bg-emerald-400 transition-all"
           >Submit</button>
       </form>
-
+      <div class="image-container">
+        {#if loading}
+          <div class="placeholder">Loading...</div>
+        {/if}
+        {#if error}
+          <div class="error-placeholder">Failed to load</div>
+        {/if}
+        <img
+          src={imageUrl}
+          width="1024"
+          height="1024"
+          alt="Generated image"
+          class:hidden={loading || error}
+          onload={handleLoad}
+          onerror={handleError}
+          loading="lazy" />
+      </div>
       {#await greetMsg}
         <p>Loading...</p>
       {:then value}
