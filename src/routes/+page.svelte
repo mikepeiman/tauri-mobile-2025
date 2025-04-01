@@ -60,8 +60,21 @@
   </div>
   <h2>Welcome to your operating system for life.</h2>
   <h3>Track, plan and execute like a fucking champion.</h3>
-
-  <form class="row" onsubmit={greet}>
+  <!-- Parent element with gradient background and padding -->
+  <div
+    class="p-4 bg-gradient-to-r from-cyan-500 via-purple-500 to-green-500 rounded-lg w-max">
+    <!-- Child element with solid background -->
+    <div class="        bg-white p-6 rounded-md">
+      <h3 class="text-lg font-semibold text-gray-900">Card Title</h3>
+      <p class="mt-2 text-gray-700">
+        This card has a nice gradient border created using the parent padding
+        trick.
+      </p>
+    </div>
+  </div>
+  <form
+    class="row p-12 border-12 border-sky-400 rounded-2xl m-4"
+    onsubmit={greet}>
     <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
     <button type="submit">Greet</button>
   </form>
