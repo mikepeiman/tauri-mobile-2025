@@ -1,540 +1,375 @@
 <script>
-  import { invoke } from "@tauri-apps/api/core"; // Assuming Tauri context
-  import { onMount } from "svelte";
+  // import { $state, $derived, $effect } from "svelte/internal"; // Use 'svelte/reactivity' in future Svelte versions
+
+  // --- Component State ---
   import OpenAI from "openai";
+  let prompt = $state("");
+  let model = $state("dall-e-3"); // Default model (updated to latest)
+  let n = $state(1); // Number of images
+  let size = $state("1024x1024"); // Default size
+  let quality = $state("standard"); // Only for dall-e-3
+  let style = $state("vivid"); // Only for dall-e-3
+  let responseFormat = $state("url"); // 'url' or 'b64_json'
 
-  // --- Reactive State (Svelte 5 Runes) ---
-  let promptInput = $state("");
-  let numImages = $state(1); // Default to 1, user can change
-  let contentType = $state("image"); // 'image' or 'text'
-  let selectedLLM = $state("gpt-4o");
-  let generationPromise = $state(null); // Holds the promise for the generation
-  let currentPrompt = $state(""); // Store the prompt used for the current generation
-  let savedGenerations = $state([]); // Array to hold { id: number, prompt: string, type: string, result: string | string[] }
+  let isLoading = $state(false);
+  let images = $state([]); // Array to store image URLs or b64 data
+  let error = $state(null); // Store API errors
 
-  let selectedWidth = $state(1024); // Example default value
-  let selectedHeight = $state(1024); // Example default value
-  const dimensionOptions = [
-    "256x256",
-    "512x512",
-    "1024x1024",
-    "1024x1792",
-    "1792x1024",
-  ];
-  let selectedDimension = $state("1024x1024"); // Set the desired default value
-  let width = $derived(parseInt(selectedDimension.split("x")[0]));
-  let height = $derived(parseInt(selectedDimension.split("x")[1]));
-
-  // Reactive statement to generate the dimension string
-  let dimensionString = $derived(`${selectedWidth}x${selectedHeight}`);
-
-  // --- OpenAI Client Setup ---
-  // WARNING: Exposing API keys directly in client-side code is insecure for web deployment.
-  // Consider using a backend proxy or Tauri backend command to handle API calls securely.
   const client = new OpenAI({
     apiKey: import.meta.env.VITE_OPENAI_API_KEY,
     dangerouslyAllowBrowser: true, // Acknowledge security risk
   });
 
-  // --- Load Saved Generations on Mount ---
-  onMount(() => {
-    const storedGenerations = localStorage.getItem("savedGenerations");
-    if (storedGenerations) {
-      try {
-        savedGenerations = JSON.parse(storedGenerations);
-      } catch (e) {
-        console.error("Failed to parse saved generations from localStorage", e);
-        localStorage.removeItem("savedGenerations"); // Clear corrupted data
-      }
-    }
-  });
+  // --- Derived State ---
+  const isDallE3 = $derived(model === "dall-e-3");
 
-  // --- Persist Saved Generations to localStorage ---
-  $effect(() => {
-    // This effect runs whenever savedGenerations changes
-    if (savedGenerations.length >= 0) {
-      // Check length >= 0 to ensure it runs even when cleared
-      localStorage.setItem(
-        "savedGenerations",
-        JSON.stringify(savedGenerations),
-      );
-      console.log("Generations saved to localStorage");
-    }
-  });
-
-  function preventDefault(fn) {
-    return function (event) {
-      event.preventDefault();
-      fn.call(this, event);
-    };
-  }
-
-  // --- Core Generation Logic ---
-  async function generateContent(prompt, count) {
-    currentPrompt = prompt; // Store the prompt for potential saving
-    console.log(
-      `🚀 Generating ${contentType} for prompt: "${prompt}", count: ${count}`,
-    );
-
-    if (contentType === "image") {
-      console.log(`   Type: Image`);
-      try {
-        const response = await client.images.generate({
-          model: "dall-e-3", // Or other models supporting 'n' > 1 if needed
-          prompt: prompt,
-          n: numImages, // Use the reactive count
-          response_format: "url", // Get URLs
-          size: dimensionString || "1024x1024", // Add size if needed, ensure model supports it
-        });
-        // Extract just the URLs
-        const imageUrls = response.data.map((item) => item.url);
-        console.log("Image URLs received:", imageUrls);
-        if (!imageUrls || imageUrls.length === 0) {
-          throw new Error("API returned no image URLs.");
-        }
-        generationPromise = null;
-        // Return object indicating type and result
-        return { type: "image", result: imageUrls };
-      } catch (err) {
-        console.error("Image generation error:", err);
-        throw err; // Propagate error to the await block
-      }
+  // Available sizes based on the selected model
+  const availableSizes = $derived(() => {
+    if (isDallE3) {
+      return ["1024x1024", "1792x1024", "1024x1792"];
     } else {
-      console.log(`   Type: Text`);
-      try {
-        // Using chat completions for text generation
-        const response = await client.chat.completions.create({
-          model: selectedLLM || "gpt-4o",
-          messages: [{ role: "user", content: prompt }],
-          n: 1, // Text generation typically returns one primary response
-        });
-        const textResult = response.choices[0]?.message?.content;
-        console.log("Text response received:", textResult);
-        if (!textResult) {
-          throw new Error("API returned no text content.");
-        }
-        generationPromise = null;
-        // Return object indicating type and result
-        return { type: "text", result: textResult };
-      } catch (err) {
-        console.error("Text generation error:", err);
-        throw err; // Propagate error
+      // dall-e-2
+      return ["256x256", "512x512", "1024x1024"];
+    }
+  });
+
+  // Max number of images allowed
+  const maxN = $derived(isDallE3 ? 1 : 10);
+
+  // Max prompt length
+  const maxPromptLength = $derived(isDallE3 ? 4000 : 1000);
+
+  // --- Effects for Automatic Adjustments ---
+
+  // Effect to reset 'n' if model changes to dall-e-3 and n > 1
+  $effect(() => {
+    if (isDallE3 && n !== 1) {
+      n = 1; // DALL-E 3 only supports n=1
+    }
+  });
+
+  // Effect to reset size if the current size is invalid for the new model
+  // $effect(() => {
+  //   if (!availableSizes.includes(size)) {
+  //     // Reset to default if current size is not supported by the selected model
+  //     size = "1024x1024";
+  //   }
+  // });
+
+  // Effect to clamp 'n' to the allowed maximum when not DALL-E 3
+  $effect(() => {
+    if (!isDallE3) {
+      if (n > maxN) {
+        n = maxN;
+      }
+      if (n < 1) {
+        n = 1;
       }
     }
-  }
+  });
 
-  // --- Form Submission Handler ---
-  function handleSubmit() {
-    if (!promptInput.trim()) {
-      alert("Please enter a prompt.");
+  // --- API Call Function ---
+  async function generateImages() {
+    if (!prompt.trim()) {
+      error = "Please enter a prompt.";
       return;
     }
-    // Assign the promise to trigger the #await block
-    generationPromise = generateContent(promptInput, numImages);
-  }
+    // No need for API key check here, handled by client instantiation
 
-  // --- Save Generation Logic ---
-  function saveCurrentGeneration(prompt, generationData) {
-    if (!prompt || !generationData) return;
+    isLoading = true;
+    error = null;
+    images = [];
 
-    const newSave = {
-      id: Date.now(), // Simple unique ID
+    // Construct parameters for the OpenAI client library
+    const params = {
       prompt: prompt,
-      type: generationData.type,
-      result: generationData.result,
+      model: model,
+      n: n,
+      size: size,
+      response_format: responseFormat,
+      // user: 'your-unique-user-id' // Optional
     };
-    // Add to the beginning of the array for newest first
-    savedGenerations = [newSave, ...savedGenerations];
-    console.log("Generation saved:", newSave);
-  }
 
-  // --- Delete Saved Generation ---
-  function deleteSavedGeneration(idToDelete) {
-    savedGenerations = savedGenerations.filter((gen) => gen.id !== idToDelete);
-    console.log("Deleted generation with ID:", idToDelete);
+    // Add parameters only applicable to dall-e-3
+    if (isDallE3) {
+      params.quality = quality;
+      params.style = style;
+    }
+    // No need to explicitly delete for other models,
+    // the library won't send them if not in the params object.
+
+    console.log("Sending parameters:", params); // For debugging
+
+    try {
+      // Use the OpenAI client library
+      const response = await client.images.generate(params);
+
+      console.log("API Success Response:", response); // For debugging
+      images = response.data; // The library puts the image array in response.data
+    } catch (err) {
+      console.error("Failed to generate images:", err);
+      if (err instanceof APIError) {
+        // Handle specific OpenAI API errors
+        error = `API Error (${err.status}): ${err.message}`;
+        if (err.code === "invalid_api_key") {
+          error =
+            "Invalid API Key. Please check your VITE_OPENAI_API_KEY in the .env file.";
+        } else if (
+          err.message.includes("model does not exist") ||
+          err.message.includes("Invalid model")
+        ) {
+          error = `Model '${model}' might not be supported or available. (Error: ${err.message})`;
+        }
+      } else if (err instanceof Error) {
+        // Handle generic errors
+        error = `Error: ${err.message}`;
+      } else {
+        error = "An unknown error occurred.";
+      }
+      images = [];
+    } finally {
+      isLoading = false;
+    }
   }
 </script>
 
-<main class="container mx-auto p-4 md:p-8">
-  <div class="row">
-    <h1 class="header text-4xl md:text-6xl lg:text-8xl">ImageGen</h1>
-  </div>
-  <h2 class="text-xl md:text-2xl mb-8 text-center text-gray-600">
-    Make cool stuff with AI
-  </h2>
+<div class="image-generator">
+  <h1>OpenAI Image Generator</h1>
 
-  <!-- Generation Controls -->
-  <div
-    class="p-1 bg-gradient-to-r from-cyan-400 via-purple-200 to-green-300 w-full my-8 rounded-lg shadow-lg">
-    <div class="w-full bg-white p-4 md:p-6 rounded-md">
-      <!-- Content Type Selector -->
-      <div
-        class="flex flex-col sm:flex-row w-full justify-between items-start sm:items-center mb-6 gap-4">
-        <h3 class="flex items-center text-lg font-semibold whitespace-nowrap">
-          Generate:
-        </h3>
-        <div class="flex items-center space-x-2 sm:space-x-4">
-          <div>
-            <input
-              type="radio"
-              id="text-option"
-              name="content-type"
-              value="text"
-              class="sr-only peer"
-              bind:group={contentType} />
-            <label
-              for="text-option"
-              class="px-3 py-1.5 md:px-4 md:py-2 bg-gray-200 rounded-md text-sm md:text-base text-gray-700 cursor-pointer peer-checked:bg-blue-500 peer-checked:text-white peer-checked:shadow-md transition-colors hover:bg-gray-300">
-              Text
-            </label>
-          </div>
-          <div>
-            <input
-              type="radio"
-              id="image-option"
-              name="content-type"
-              value="image"
-              class="sr-only peer"
-              bind:group={contentType} />
-            <label
-              for="image-option"
-              class="px-3 py-1.5 md:px-4 md:py-2 bg-gray-200 rounded-md text-sm md:text-base text-gray-700 cursor-pointer peer-checked:bg-blue-500 peer-checked:text-white peer-checked:shadow-md transition-colors hover:bg-gray-300">
-              Image
-            </label>
-          </div>
-        </div>
+  <div class="settings">
+    <div class="form-group">
+      <label for="model">Model:</label>
+      <select id="model" bind:value={model}>
+        <option value="gpt-4o">GPT-4o</option>
+        <option value="dall-e-3">DALL-E 3</option>
+        <option value="dall-e-2">DALL-E 2</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="size">Size:</label>
+      <select id="size" bind:value={size}>
+        {#each availableSizes as s}
+          <option value={s}>{s}</option>
+        {/each}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="n">Number of Images (Max {maxN}):</label>
+      <input
+        type="number"
+        id="n"
+        bind:value={n}
+        min="1"
+        max={maxN}
+        disabled={isDallE3} />
+      {#if isDallE3}
+        <small>(DALL-E 3 only supports 1 image)</small>
+      {/if}
+    </div>
+
+    <!-- DALL-E 3 Specific Options -->
+    {#if isDallE3}
+      <div class="form-group">
+        <label for="quality">Quality:</label>
+        <select id="quality" bind:value={quality}>
+          <option value="standard">Standard</option>
+          <option value="hd">HD</option>
+        </select>
       </div>
 
-      <!-- Image Specific Options (Conditional) -->
-      {#if contentType === "image"}
-        <div class="border-t border-gray-200 pt-6 mb-6">
-          <h3 class="text-lg font-semibold text-gray-800 mb-4">
-            Image Generation Options
-          </h3>
-          <!-- Number of Images Slider -->
-          <div
-            class="grid grid-cols-1 md:grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 mb-4">
-            <label for="num-images-slider" class="font-medium text-gray-700"
-              >Number:</label>
-            <div class="flex items-center gap-3">
-              <input
-                id="num-images-slider"
-                type="range"
-                min="1"
-                max="4"
-                step="1"
-                bind:value={numImages}
-                class="appearance-none w-full h-2 bg-gradient-to-r from-cyan-300 to-purple-300 rounded-full outline-none shadow-sm cursor-pointer flex-grow"
-                style="--thumb-size: 1.5rem;" />
-              <span
-                class="bg-cyan-100 text-cyan-800 font-medium w-8 h-8 flex items-center justify-center rounded-full text-sm">
-                {numImages}
-              </span>
-            </div>
-          </div>
+      <div class="form-group">
+        <label for="style">Style:</label>
+        <select id="style" bind:value={style}>
+          <option value="vivid">Vivid</option>
+          <option value="natural">Natural</option>
+        </select>
+      </div>
+    {/if}
 
-          <!-- Image Size Selector (Example - not wired to API call yet) -->
-          <div
-            class="grid grid-cols-1 md:grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2">
-            <span class="font-medium text-gray-700">Size:</span>
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label for="width" class="sr-only">Width</label>
-                <select
-                  id="width"
-                  name="width"
-                  bind:value={selectedDimension}
-                  class="shadow-sm appearance-none border border-gray-300 bg-white rounded w-full py-1.5 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 text-sm">
-                  {#each dimensionOptions as dimension}
-                    <option value={dimension}>{dimension}</option>
-                  {/each}
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
+    <div class="form-group">
+      <label for="responseFormat">Response Format:</label>
+      <select id="responseFormat" bind:value={responseFormat}>
+        <option value="url">URL</option>
+        <option value="b64_json">Base64 JSON</option>
+      </select>
+      {#if responseFormat === "url"}
+        <small>(URLs expire after 60 minutes)</small>
       {/if}
+    </div>
 
-      <!-- Prompt Input Form -->
-      <form
-        class="border-t border-gray-200 pt-6"
-        onsubmit={preventDefault(handleSubmit)}>
-        <label
-          for="prompt-input"
-          class="block text-lg font-semibold text-gray-800 mb-3"
-          >Enter your prompt:</label>
-        <div class="flex flex-col sm:flex-row gap-3">
-          <textarea
-            id="prompt-input"
-            class="flex-grow p-3 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 resize-none"
-            rows="3"
-            placeholder="e.g., A cute cat astronaut floating in space"
-            bind:value={promptInput}></textarea>
-          <button
-            type="submit"
-            class="bg-emerald-500 text-white font-semibold px-5 py-3 cursor-pointer rounded-lg hover:bg-emerald-600 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={!promptInput.trim() || generationPromise}>
-            {#if generationPromise}
-              Generating...
-            {:else}
-              Generate
-            {/if}
-          </button>
-        </div>
-      </form>
+    <!-- Prompt needs to be last in grid for layout -->
+    <div class="form-group">
+      <label for="prompt">Prompt (Max {maxPromptLength} chars):</label>
+      <textarea
+        id="prompt"
+        bind:value={prompt}
+        rows="5"
+        maxlength={maxPromptLength}
+        placeholder="e.g., A photorealistic image of an astronaut playing chess with a cat on the moon"
+      ></textarea>
     </div>
   </div>
 
-  <!-- Generation Result Display -->
-  <div class="mt-8 mb-12 min-h-[100px]">
-    {#if generationPromise}
-      {#await generationPromise}
-        <div class="p-4 text-center text-gray-500">
-          <svg
-            class="animate-spin h-8 w-8 text-cyan-500 mx-auto"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24">
-            <circle
-              class="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              stroke-width="4"></circle>
-            <path
-              class="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            ></path>
-          </svg>
-          <p class="mt-2">Generating your creation...</p>
-        </div>
-      {:then data}
-        <div class="bg-white p-4 rounded-lg shadow">
-          <h3 class="text-lg font-semibold mb-3">
-            Result for: "{currentPrompt}"
-          </h3>
-          {#if data.type === "image"}
-            <div
-              class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {#each data.result as imageUrl, i (imageUrl)}
-                <div class="relative group">
-                  <img
-                    src={imageUrl}
-                    alt="Generated image {i + 1} for prompt: {currentPrompt}"
-                    class="w-full h-auto object-cover rounded border border-gray-200 shadow-sm"
-                    loading="lazy" />
-                  <a
-                    href={imageUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity text-xs font-bold"
-                    >View Full</a>
-                </div>
-              {/each}
-            </div>
-          {:else if data.type === "text"}
-            <div
-              class="text-result bg-gray-50 p-4 border rounded whitespace-pre-wrap">
-              {data.result}
-            </div>
-          {/if}
-          <!-- Save Button -->
-          <div class="mt-4 text-right">
-            <button
-              onclick={() => saveCurrentGeneration(currentPrompt, data)}
-              class="bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium py-1.5 px-3 rounded shadow-sm transition-colors">
-              Save Result
-            </button>
-          </div>
-        </div>
-      {:catch error}
-        <div
-          class="p-4 text-center text-red-600 bg-red-50 border border-red-200 rounded-lg">
-          <p class="font-semibold">Generation failed!</p>
-          <p class="text-sm mt-1">{error.message}</p>
-        </div>
-      {/await}
+  <button onclick={generateImages} disabled={isLoading || !prompt}>
+    {#if isLoading}
+      Generating...
+    {:else}
+      Generate Images
     {/if}
-  </div>
+  </button>
 
-  <!-- Saved Generations Display -->
-  {#if savedGenerations.length > 0}
-    <div class="mt-12 border-t pt-8">
-      <h2 class="text-2xl font-semibold mb-6 text-center">Saved Generations</h2>
-      <div class="space-y-6">
-        {#each savedGenerations as saved (saved.id)}
-          <div class="bg-white p-4 rounded-lg shadow relative group">
-            <button
-              onclick={() => deleteSavedGeneration(saved.id)}
-              class="absolute top-2 right-2 p-1 bg-red-100 text-red-600 hover:bg-red-200 rounded-full opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500"
-              aria-label="Delete saved generation">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                class="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                stroke-width="2">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-            <p class="text-sm text-gray-500 mb-2">Prompt:</p>
-            <p class="font-medium text-gray-800 mb-3">"{saved.prompt}"</p>
-            {#if saved.type === "image"}
-              <div
-                class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {#each saved.result as imageUrl, i (imageUrl)}
-                  <div class="relative group/img">
-                    <img
-                      src={imageUrl}
-                      alt="Saved image {i + 1} for prompt: {saved.prompt}"
-                      class="w-full h-auto object-cover rounded border border-gray-200"
-                      loading="lazy" />
-                    <a
-                      href={imageUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="absolute inset-0 bg-black bg-opacity-0 group-hover/img:bg-opacity-50 flex items-center justify-center text-white opacity-0 group-hover/img:opacity-100 transition-opacity text-xs font-bold"
-                      >View</a>
-                  </div>
-                {/each}
-              </div>
-            {:else if saved.type === "text"}
-              <div
-                class="text-result bg-gray-50 p-3 border rounded text-sm whitespace-pre-wrap">
-                {saved.result}
-              </div>
-            {/if}
-          </div>
-        {/each}
-      </div>
+  {#if error}
+    <div class="error">{error}</div>
+  {/if}
+
+  {#if isLoading && images.length === 0}
+    <div class="loading">Generating image(s), please wait...</div>
+  {/if}
+
+  {#if images.length > 0}
+    <div class="image-results">
+      {#each images as image}
+        {#if responseFormat === "url"}
+          <img
+            src={image.url}
+            alt={prompt}
+            title={image.revised_prompt ?? prompt} />
+        {:else if responseFormat === "b64_json"}
+          <img
+            src={`data:image/png;base64,${image.b64_json}`}
+            alt={prompt}
+            title={image.revised_prompt ?? prompt} />
+        {/if}
+      {/each}
+      {#if isDallE3 && images[0]?.revised_prompt}
+        <p
+          style="grid-column: 1 / -1; text-align: left; font-size: 0.9em; color: #333;">
+          <strong>Revised Prompt (DALL-E 3):</strong>
+          {images[0].revised_prompt}
+        </p>
+      {/if}
     </div>
   {/if}
-</main>
+</div>
 
 <style>
-  .logo.vite:hover {
-    filter: drop-shadow(0 0 2em #747bff);
+  .image-generator {
+    font-family: sans-serif;
+    max-width: 800px;
+    margin: 2em auto;
+    padding: 1em;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background-color: #f9f9f9;
   }
-
-  .logo.svelte-kit:hover {
-    filter: drop-shadow(0 0 2em #ff3e00);
-  }
-
-  :root {
-    font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-    font-size: 16px;
-    line-height: 24px;
-    font-weight: 400;
-
-    color: #0f0f0f;
-    background-color: #f6f6f6;
-
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    -webkit-text-size-adjust: 100%;
-  }
-
-  .container {
-    margin: 0;
-    padding-top: 10vh;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    text-align: center;
-  }
-
-  .logo {
-    height: 6em;
-    padding: 1.5em;
-    will-change: filter;
-    transition: 0.75s;
-  }
-
-  .logo.tauri:hover {
-    filter: drop-shadow(0 0 2em #24c8db);
-  }
-
-  .row {
-    display: flex;
-    justify-content: center;
-  }
-
-  a {
-    font-weight: 500;
-    color: #646cff;
-    text-decoration: inherit;
-  }
-
-  a:hover {
-    color: #535bf2;
-  }
-
   h1 {
     text-align: center;
+    color: #333;
+  }
+  .settings {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5em;
+    margin-bottom: 1.5em;
+  }
+  .form-group {
+    display: flex;
+    flex-direction: column;
+  }
+  .form-group label {
+    margin-bottom: 0.5em;
+    font-weight: bold;
+    color: #555;
+  }
+  .form-group input,
+  .form-group select,
+  .form-group textarea {
+    padding: 0.8em;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 1em;
+  }
+  .form-group textarea {
+    resize: vertical;
+    min-height: 80px;
+  }
+  .form-group input[type="number"] {
+    max-width: 100px;
+  }
+  .form-group small {
+    font-size: 0.8em;
+    color: #777;
+    margin-top: 0.3em;
+  }
+  .api-key-group small {
+    color: #c0392b; /* Warning color */
+  }
+  button {
+    padding: 0.8em 1.5em;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 1.1em;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    width: 100%;
+  }
+  button:hover:not(:disabled) {
+    background-color: #0056b3;
+  }
+  button:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+  }
+  .loading,
+  .error {
+    text-align: center;
+    margin-top: 1em;
+    padding: 1em;
+    border-radius: 4px;
+  }
+  .loading {
+    color: #007bff;
+  }
+  .error {
+    color: #dc3545;
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+  }
+  .image-results {
+    margin-top: 2em;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1em;
+  }
+  .image-results img {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid #eee;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+  .image-results p {
+    text-align: center;
+    font-style: italic;
+    color: #555;
   }
 
-  .header {
-    font-size: 8rem;
-    font-weight: 800;
-    color: #0f0f0f;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
-    margin-bottom: 5rem;
-    margin-top: 5rem;
-    font-family: "montserrat", "Roboto", sans-serif;
-  }
-
-  input[type="range"]::-webkit-slider-thumb {
-    appearance: none;
-    width: var(--thumb-size);
-    height: var(--thumb-size);
-    background-color: white;
-    border: 2px solid black;
-    border-radius: 0.375rem;
-    box-shadow:
-      0 1px 3px 0 rgba(0, 0, 0, 0.1),
-      0 1px 2px 0 rgba(0, 0, 0, 0.06);
-    margin-top: calc(
-      - (var(--thumb-size) - 0.5rem) / 2
-    ); /* Center the thumb vertically */
-  }
-
-  input[type="range"]::-moz-range-thumb {
-    appearance: none;
-    width: var(--thumb-size);
-    height: var(--thumb-size);
-    background-color: white;
-    border: 2px solid black;
-    border-radius: 0.375rem;
-    box-shadow:
-      0 1px 3px 0 rgba(0, 0, 0, 0.1),
-      0 1px 2px 0 rgba(0, 0, 0, 0.06);
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root {
-      color: #f6f6f6;
-      background-color: #2f2f2f;
+  /* Responsive adjustments */
+  @media (min-width: 600px) {
+    .settings {
+      grid-template-columns: 1fr 1fr; /* Two columns on wider screens */
     }
-
-    a:hover {
-      color: #24c8db;
+    /* Make prompt span full width */
+    .form-group:has(textarea) {
+      grid-column: 1 / -1;
     }
-
-    input,
-    button {
-      color: #ffffff;
-      background-color: #0f0f0f98;
-    }
-    button:active {
-      background-color: #0f0f0f69;
+    /* Make API key span full width */
+    .api-key-group {
+      grid-column: 1 / -1;
     }
   }
 </style>
